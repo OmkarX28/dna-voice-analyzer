@@ -156,6 +156,79 @@ def find_mutations():
         },
         "message": f"{len(mutations)} mutation(s) detected." if mutations else "No mutations detected. Sequences are identical."
     })
+# ─── Smith-Waterman Alignment ────────────────────────────────
+def smith_waterman(seq1, seq2, match=2, mismatch=-1, gap=-2):
+    rows = len(seq1) + 1
+    cols = len(seq2) + 1
+
+    matrix = [[0] * cols for _ in range(rows)]
+    max_score = 0
+    max_pos = (0, 0)
+
+    for i in range(1, rows):
+        for j in range(1, cols):
+            match_score = match if seq1[i-1] == seq2[j-1] else mismatch
+            diagonal = matrix[i-1][j-1] + match_score
+            up = matrix[i-1][j] + gap
+            left = matrix[i][j-1] + gap
+            matrix[i][j] = max(0, diagonal, up, left)
+            if matrix[i][j] > max_score:
+                max_score = matrix[i][j]
+                max_pos = (i, j)
+
+    aligned_seq1 = ""
+    aligned_seq2 = ""
+    i, j = max_pos
+
+    while i > 0 and j > 0 and matrix[i][j] > 0:
+        current = matrix[i][j]
+        match_score = match if seq1[i-1] == seq2[j-1] else mismatch
+        if current == matrix[i-1][j-1] + match_score:
+            aligned_seq1 = seq1[i-1] + aligned_seq1
+            aligned_seq2 = seq2[j-1] + aligned_seq2
+            i -= 1
+            j -= 1
+        elif current == matrix[i-1][j] + gap:
+            aligned_seq1 = seq1[i-1] + aligned_seq1
+            aligned_seq2 = "-" + aligned_seq2
+            i -= 1
+        else:
+            aligned_seq1 = "-" + aligned_seq1
+            aligned_seq2 = seq2[j-1] + aligned_seq2
+            j -= 1
+
+    matches = sum(1 for a, b in zip(aligned_seq1, aligned_seq2) if a == b)
+    similarity = round((matches / max(len(aligned_seq1), 1)) * 100, 2)
+
+    return max_score, aligned_seq1, aligned_seq2, similarity
+
+
+@app.route('/analyze/align', methods=['POST'])
+def align_sequences():
+    data = request.get_json()
+    seq1 = data.get('seq1', '').upper().strip()
+    seq2 = data.get('seq2', '').upper().strip()
+
+    if not seq1 or not seq2:
+        return jsonify({"error": "Please provide both seq1 and seq2"}), 400
+
+    if not all(c in 'ATCG' for c in seq1):
+        return jsonify({"error": "seq1 contains invalid characters. Only A, T, C, G allowed"}), 400
+
+    if not all(c in 'ATCG' for c in seq2):
+        return jsonify({"error": "seq2 contains invalid characters. Only A, T, C, G allowed"}), 400
+
+    score, aligned1, aligned2, similarity = smith_waterman(seq1, seq2)
+
+    return jsonify({
+        "seq1_length": len(seq1),
+        "seq2_length": len(seq2),
+        "alignment_score": score,
+        "similarity_percentage": similarity,
+        "aligned_seq1": aligned1,
+        "aligned_seq2": aligned2,
+        "message": f"Sequences are {similarity}% similar with an alignment score of {score}."
+    })
 
 if __name__ == '__main__':
     app.run(debug=True)
