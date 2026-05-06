@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VoiceGen - Prototype</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #f4f7f6; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+        .container { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 100%; max-width: 500px; text-align: center; }
+        h1 { color: #d32f2f; margin-bottom: 5px; }
+        p.subtitle { color: #666; margin-bottom: 20px; font-size: 14px; }
+        textarea, input { width: 90%; padding: 10px; margin: 10px 0; border: 1px solid #ccc; border-radius: 6px; font-family: monospace; }
+        .mic-btn { background-color: #d32f2f; color: white; border: none; padding: 15px 30px; border-radius: 50px; font-size: 16px; font-weight: bold; cursor: pointer; transition: 0.3s; margin-top: 10px; }
+        .mic-btn:hover { background-color: #b71c1c; }
+        .mic-btn.listening { background-color: #4caf50; animation: pulse 1.5s infinite; }
+        #status, #result { margin-top: 20px; font-weight: bold; color: #333; min-height: 20px; }
+        @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.05); } 100% { transform: scale(1); } }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>VoiceGen AI</h1>
+    <p class="subtitle">DNA Sequence Analyzer - Stage 1 Prototype</p>
+    
+    <textarea id="patientSeq" rows="4" placeholder="Paste Patient DNA Sequence here (e.g., ATCGGTAT...)"></textarea>
+    <input type="text" id="targetSeq" placeholder="Target Mutation (e.g., ATCG)">
+    
+    <button id="micBtn" class="mic-btn">🎤 Speak Command</button>
+    
+    <div id="status">Waiting for input...</div>
+    <div id="result"></div>
+</div>
+
+<script>
+    const micBtn = document.getElementById('micBtn');
+    const statusDiv = document.getElementById('status');
+    const resultDiv = document.getElementById('result');
+    
+    // Check for Browser Speech Recognition
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const recognition = new SpeechRecognition();
+    
+    recognition.onstart = function() {
+        micBtn.classList.add('listening');
+        micBtn.innerText = "Listening...";
+        statusDiv.innerText = "Please speak now...";
+    };
+    
+    recognition.onspeechend = function() {
+        micBtn.classList.remove('listening');
+        micBtn.innerText = "🎤 Speak Command";
+    };
+    
+    recognition.onresult = async function(event) {
+        const transcript = event.results[0][0].transcript;
+        statusDiv.innerText = `You said: "${transcript}"`;
+        
+        // Grab the sequences
+        const seq1 = document.getElementById('patientSeq').value.trim() || "ATCGGTA";
+        const seq2 = document.getElementById('targetSeq').value.trim() || "ATCGTTA";
+        
+        statusDiv.innerText += " | Processing on backend...";
+
+        try {
+            // HIT YOUR FLASK BACKEND
+            const response = await fetch('http://127.0.0.1:5000/analyze/align', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ seq1: seq1, seq2: seq2 })
+            });
+            
+            const data = await response.json();
+            
+            // Format the result
+            const resultText = data.message || `Alignment score is ${data.alignment_score}. Similarity is ${data.similarity_percentage}%.`;
+            resultDiv.innerText = resultText;
+            
+            // SPEAK THE RESULT OUT LOUD
+            const speech = new SpeechSynthesisUtterance(resultText);
+            window.speechSynthesis.speak(speech);
+
+        } catch (error) {
+            resultDiv.innerText = "Backend Error. Is Flask running?";
+            console.error(error);
+        }
+    };
+    
+    micBtn.addEventListener('click', () => {
+        recognition.start();
+    });
+</script>
+
+</body>
+</html>
