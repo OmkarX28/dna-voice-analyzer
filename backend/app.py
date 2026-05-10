@@ -7,9 +7,9 @@ import json
 import os
 
 from pathlib import Path
-load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env")
+load_dotenv(override=True)
 # ── Gemini Setup ─────────────────────────────────────────────
-groq_client = Groq(api_key="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")
+groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 app = Flask(__name__)
 CORS(app)
