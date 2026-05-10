@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 load_dotenv(override=True)
 # ── Gemini Setup ─────────────────────────────────────────────
-groq_client = Groq(api_key=os.getenv("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"))
+groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 app = Flask(__name__)
 CORS(app)
