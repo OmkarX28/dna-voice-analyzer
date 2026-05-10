@@ -2,9 +2,14 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
 from Bio.Seq import Seq
+from groq import Groq
+import json
 import os
 
-load_dotenv()
+from pathlib import Path
+load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env")
+# ── Gemini Setup ─────────────────────────────────────────────
+groq_client = Groq(api_key="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")
 
 app = Flask(__name__)
 CORS(app)
@@ -232,6 +237,122 @@ def align_sequences():
         "aligned_seq1": aligned1,
         "aligned_seq2": aligned2,
         "message": f"Sequences are {similarity}% similar with an alignment score of {score}."
+    })
+# ── NLP Intent Engine ─────────────────────────────────────────
+def parse_intent(user_query, sequence=None):
+    prompt = f"""
+You are an AI assistant for a DNA sequence analysis tool.
+A user has sent the following voice query: "{user_query}"
+The DNA sequence they uploaded is: "{sequence if sequence else 'not provided'}"
+
+Your job is to:
+1. Understand what analysis the user wants
+2. Extract any pattern or second sequence they mentioned
+3. Return ONLY a valid JSON object — no explanation, no markdown, no extra text
+
+Return this exact JSON structure:
+{{
+  "intent": "<one of: pattern_search, mutation_detection, alignment, gc_content, explain, unknown>",
+  "pattern": "<the DNA pattern to search for, or null>",
+  "second_sequence": "<a second sequence for alignment or mutation comparison, or null>",
+  "plain_english_query": "<rephrase what the user wants in one clear sentence>"
+}}
+"""
+    response = groq_client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.1
+    )
+    text = response.choices[0].message.content.strip()
+    text = text.replace("```json", "").replace("```", "").strip()
+    return json.loads(text)
+
+
+def generate_plain_english_response(intent, analysis_result, user_query):
+    prompt = f"""
+You are a helpful medical AI assistant explaining DNA analysis results.
+The user asked: "{user_query}"
+The analysis result is: {json.dumps(analysis_result)}
+
+Write a clear, friendly, plain-English explanation of these results in 2-3 sentences.
+Speak directly to the user. Do not use technical jargon unless you explain it.
+Do not mention JSON or code. Just explain what was found and what it might mean.
+"""
+    response = groq_client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.3
+    )
+    return response.choices[0].message.content.strip()
+
+@app.route('/voice/query', methods=['POST'])
+def voice_query():
+    data = request.get_json()
+    user_query = data.get('query', '').strip()
+    sequence = data.get('sequence', '').upper().strip()
+
+    if not user_query:
+        return jsonify({"error": "No query provided"}), 400
+
+    # Step 1 — parse intent
+    try:
+        intent_data = parse_intent(user_query, sequence)
+    except Exception as e:
+        return jsonify({"error": f"Failed to parse intent: {str(e)}"}), 500
+
+    intent = intent_data.get('intent')
+    result = {}
+
+    # Step 2 — run the right algorithm
+    if intent == 'pattern_search' and sequence and intent_data.get('pattern'):
+        pattern = intent_data['pattern'].upper().strip()
+        positions = kmp_search(sequence, pattern)
+        gc = calculate_gc(sequence)
+        result = {
+            "pattern": pattern,
+            "occurrences": len(positions),
+            "positions": positions,
+            "gc_content": gc
+        }
+
+    elif intent == 'mutation_detection' and sequence and intent_data.get('second_sequence'):
+        reference = intent_data['second_sequence'].upper().strip()
+        mutations = detect_mutations(reference, sequence)
+        result = {
+            "total_mutations": len(mutations),
+            "mutations": mutations
+        }
+
+    elif intent == 'alignment' and sequence and intent_data.get('second_sequence'):
+        seq2 = intent_data['second_sequence'].upper().strip()
+        score, aligned1, aligned2, similarity = smith_waterman(sequence, seq2)
+        result = {
+            "alignment_score": score,
+            "similarity_percentage": similarity,
+            "aligned_seq1": aligned1,
+            "aligned_seq2": aligned2
+        }
+
+    elif intent == 'gc_content' and sequence:
+        gc = calculate_gc(sequence)
+        result = {"gc_content": gc}
+
+    elif intent == 'explain':
+        result = {"topic": intent_data.get('plain_english_query', user_query)}
+
+    else:
+        result = {"note": "Could not determine analysis type from query"}
+
+    # Step 3 — generate plain English response
+    try:
+        explanation = generate_plain_english_response(intent, result, user_query)
+    except Exception as e:
+        explanation = "Analysis complete. Please see the results below."
+
+    return jsonify({
+        "intent": intent,
+        "result": result,
+        "explanation": explanation
     })
 
 if __name__ == '__main__':
