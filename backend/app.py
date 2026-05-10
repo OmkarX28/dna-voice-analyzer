@@ -87,6 +87,75 @@ def find_pattern():
         "gc_content": gc,
         "message": f"Pattern '{pattern}' found {len(positions)} time(s) in the sequence." if positions else f"Pattern '{pattern}' was not found in the sequence."
     })
+# ─── Mutation Detector ───────────────────────────────────────
+def detect_mutations(reference, sample):
+    mutations = []
+
+    # Point mutations (substitutions)
+    min_len = min(len(reference), len(sample))
+    for i in range(min_len):
+        if reference[i] != sample[i]:
+            mutations.append({
+                "type": "point_mutation",
+                "position": i,
+                "reference_base": reference[i],
+                "sample_base": sample[i],
+                "description": f"Position {i}: '{reference[i]}' changed to '{sample[i]}'"
+            })
+
+    # Insertion (sample is longer than reference)
+    if len(sample) > len(reference):
+        inserted = sample[len(reference):]
+        mutations.append({
+            "type": "insertion",
+            "position": len(reference),
+            "inserted_bases": inserted,
+            "description": f"Insertion of '{inserted}' after position {len(reference) - 1}"
+        })
+
+    # Deletion (sample is shorter than reference)
+    if len(sample) < len(reference):
+        deleted = reference[len(sample):]
+        mutations.append({
+            "type": "deletion",
+            "position": len(sample),
+            "deleted_bases": deleted,
+            "description": f"Deletion of '{deleted}' starting at position {len(sample)}"
+        })
+
+    return mutations
+
+
+@app.route('/analyze/mutations', methods=['POST'])
+def find_mutations():
+    data = request.get_json()
+    reference = data.get('reference', '').upper().strip()
+    sample = data.get('sample', '').upper().strip()
+
+    if not reference or not sample:
+        return jsonify({"error": "Please provide both a reference and a sample sequence"}), 400
+
+    if not all(c in 'ATCG' for c in reference):
+        return jsonify({"error": "Reference contains invalid characters. Only A, T, C, G allowed"}), 400
+
+    if not all(c in 'ATCG' for c in sample):
+        return jsonify({"error": "Sample contains invalid characters. Only A, T, C, G allowed"}), 400
+
+    mutations = detect_mutations(reference, sample)
+    gc_ref = calculate_gc(reference)
+    gc_sample = calculate_gc(sample)
+
+    return jsonify({
+        "reference_length": len(reference),
+        "sample_length": len(sample),
+        "total_mutations": len(mutations),
+        "mutations": mutations,
+        "gc_content": {
+            "reference": gc_ref,
+            "sample": gc_sample
+        },
+        "message": f"{len(mutations)} mutation(s) detected." if mutations else "No mutations detected. Sequences are identical."
+    })
 
 if __name__ == '__main__':
     app.run(debug=True)
