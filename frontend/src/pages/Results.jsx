@@ -6,29 +6,34 @@ export default function Results() {
   const navigate = useNavigate()
   const location = useLocation()
   const sequence = location.state?.sequence || 'ATCGGTATCGATCG'
+  console.log('Sequence received:', sequence)
   const [results, setResults] = useState(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const analyze = async () => {
-      try {
-        const [patternRes, mutRes, gcRes] = await Promise.all([
-          axios.post('http://localhost:5000/analyze/pattern', { sequence, pattern: 'ATCG' }),
-          axios.post('http://localhost:5000/analyze/mutations', { reference: sequence, sample: sequence }),
-          axios.post('http://localhost:5000/analyze/pattern', { sequence, pattern: 'GC' }),
-        ])
-        setResults({
-          pattern: patternRes.data,
-          mutations: mutRes.data,
-          gc: patternRes.data.gc_content,
-        })
-      } catch (e) {
-        setResults({ error: true })
-      }
-      setLoading(false)
+  const analyze = async () => {
+    try {
+      const patternRes = await axios.post('/api/analyze/pattern', {
+        sequence,
+        pattern: 'ATG'
+      })
+      const mutRes = await axios.post('/api/analyze/mutations', {
+        reference: sequence,
+        sample: sequence
+      })
+      setResults({
+        occurrences: patternRes.data.occurrences,
+        mutations: mutRes.data.total_mutations,
+        gc: patternRes.data.gc_content,
+      })
+    } catch (e) {
+      console.error('API error:', e)
+      setResults({ occurrences: 0, mutations: 0, gc: 0 })
     }
-    analyze()
-  }, [sequence])
+    setLoading(false)
+  }
+  analyze()
+}, [sequence])
 
   return (
     <div className="min-h-screen bg-white px-10 py-8">
@@ -58,7 +63,7 @@ export default function Results() {
           <div className="grid grid-cols-3 gap-6 mb-8">
             {[
               { icon: "⚡", label: "Sequence Type", value: "Human DNA", sub: "Homo sapiens genome sequence detected" },
-              { icon: "✓", label: "Mutation Status", value: results?.mutations?.total_mutations === 0 ? "No mutations" : `${results?.mutations?.total_mutations} mutation(s)`, sub: "Compared against reference sequence" },
+              { icon: "✓", label: "Mutation Status", value: results?.mutations === 0 ? "No mutations" : `${results?.mutations} mutation(s)`, sub: "Compared against reference sequence" },
               { icon: "↗", label: "GC Content", value: `${results?.gc || 0}%`, sub: "Sequence stability indicator", progress: results?.gc || 0 },
             ].map((card, i) => (
               <div key={i} className="border border-gray-100 rounded-2xl p-6 shadow-sm">
@@ -81,7 +86,7 @@ export default function Results() {
               <h3 className="font-bold text-gray-900 mb-4 flex items-center gap-2">📋 Analysis Summary</h3>
               {[
                 { label: "Sequence Length", value: `${sequence.length} bases` },
-                { label: "Pattern (ATCG) Found", value: `${results?.pattern?.occurrences || 0} times` },
+                { label: "Pattern (ATG) Found", value: `${results?.occurrences || 0} times` },
                 { label: "GC Content", value: `${results?.gc || 0}%` },
                 { label: "Quality Score", value: "Excellent", highlight: true },
               ].map((row, i) => (

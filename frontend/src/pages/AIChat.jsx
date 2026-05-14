@@ -43,7 +43,7 @@ export default function AIChat() {
     setInput('')
     setLoading(true)
     try {
-      const res = await axios.post('http://localhost:5000/voice/query', { query, sequence })
+      const res = await axios.post('/api/voice/query', { query, sequence })
       const reply = res.data.explanation
       setMessages(prev => [...prev, { role: 'ai', text: reply }])
       speak(reply)
