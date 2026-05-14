@@ -273,15 +273,63 @@ Return this exact JSON structure:
     return json.loads(text)
 
 
-def generate_plain_english_response(intent, analysis_result, user_query):
+MUTATION_KNOWLEDGE_BASE = """
+KNOWN MUTATIONS REFERENCE:
+1. Sickle Cell Anemia - HBB gene - Point mutation GAG→GTG at codon 6
+   Causes: Red blood cells become sickle-shaped, blocking blood flow
+   Explanation: The single change from GAG to GTG causes hemoglobin to form rigid rods inside red blood cells, making them crescent-shaped instead of round. This causes severe pain, anemia, and organ damage.
+   Severity: High
+
+2. BRCA1 Breast Cancer - BRCA1 gene - Deletion/frameshift mutations
+   Causes: Significantly increased risk of breast and ovarian cancer
+   Explanation: Mutations in BRCA1 disable a tumor suppressor protein that normally repairs damaged DNA. Without this repair mechanism, cells can become cancerous. Carriers have up to 72% lifetime risk of breast cancer.
+   Severity: High
+
+3. Cystic Fibrosis - CFTR gene - Deletion of phenylalanine at position 508
+   Causes: Thick mucus buildup in lungs, digestive system, and other organs
+   Explanation: The missing amino acid causes the CFTR protein to fold incorrectly and get destroyed before reaching the cell surface. Without functional CFTR, chloride transport fails causing thick sticky mucus to accumulate.
+   Severity: High
+
+4. Huntington's Disease - HTT gene - CAG repeat expansion beyond 36 repeats
+   Causes: Progressive brain cell death leading to movement, cognitive and psychiatric disorders
+   Explanation: Extra CAG repeats create an abnormally long huntingtin protein that damages brain cells over time. Symptoms typically appear between ages 30-50 and worsen progressively with no cure currently available.
+   Severity: High
+
+5. TB Drug Resistance - rpoB gene - Point mutations at codons 516, 526, 531
+   Causes: Resistance to rifampicin, a key TB antibiotic
+   Explanation: Mutations in the rpoB gene change the shape of RNA polymerase so rifampicin can no longer bind to it. This makes the TB bacteria resistant to one of the most important first-line antibiotics, requiring more toxic second-line drugs.
+   Severity: High
+
+6. Beta Thalassemia - HBB gene - Various point mutations and deletions
+   Causes: Reduced or absent beta-globin production leading to severe anemia
+   Explanation: Mutations in the HBB gene reduce production of the beta-globin component of hemoglobin. Without enough functional hemoglobin, red blood cells are small and destroyed rapidly, causing severe anemia requiring regular blood transfusions.
+   Severity: High
+
+7. PKU (Phenylketonuria) - PAH gene - Point mutations reducing enzyme activity
+   Causes: Buildup of phenylalanine in blood causing intellectual disability
+   Explanation: Mutations in the PAH gene reduce or eliminate the enzyme that breaks down phenylalanine from food. Without treatment, phenylalanine accumulates to toxic levels in the brain causing severe intellectual disability. Treatable with a strict low-phenylalanine diet.
+   Severity: High
+
+8. Hemophilia A - F8 gene - Inversion or point mutations
+   Causes: Inability to form blood clots properly
+   Explanation: Mutations in the F8 gene reduce or eliminate clotting factor VIII. Without this protein, the blood clotting cascade cannot complete properly, causing prolonged bleeding from injuries and spontaneous bleeding into joints and muscles.
+   Severity: High
+"""
+
+def generate_plain_english_response(intent, analysis_result, user_query,context):
     prompt = f"""
 You are a helpful medical AI assistant explaining DNA analysis results.
+You have access to this medical knowledge base about known mutations:
+
+{MUTATION_KNOWLEDGE_BASE}
+
 The user asked: "{user_query}"
 The analysis result is: {json.dumps(analysis_result)}
 
 Write a clear, friendly, plain-English explanation of these results in 2-3 sentences.
+If the result relates to any mutation in the knowledge base, reference it specifically.
 Speak directly to the user. Do not use technical jargon unless you explain it.
-Do not mention JSON or code. Just explain what was found and what it might mean.
+Do not mention JSON or code. Just explain what was found and what it might mean medically.
 """
     response = groq_client.chat.completions.create(
         model="llama-3.3-70b-versatile",
@@ -295,6 +343,7 @@ def voice_query():
     data = request.get_json()
     user_query = data.get('query', '').strip()
     sequence = data.get('sequence', '').upper().strip()
+    context = data.get('context', '')
 
     if not user_query:
         return jsonify({"error": "No query provided"}), 400
@@ -350,7 +399,7 @@ def voice_query():
 
     # Step 3 — generate plain English response
     try:
-        explanation = generate_plain_english_response(intent, result, user_query)
+        explanation = generate_plain_english_response(intent, result, user_query,context)
     except Exception as e:
         explanation = "Analysis complete. Please see the results below."
 

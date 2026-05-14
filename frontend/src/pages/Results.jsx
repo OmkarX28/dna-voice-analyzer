@@ -100,9 +100,9 @@ useEffect(() => {
             <div className="w-80 bg-gradient-to-br from-blue-900 to-teal-500 rounded-2xl p-6">
               <h3 className="font-bold text-white mb-2">Need More Insights?</h3>
               <p className="text-white/70 text-sm mb-6">Our AI assistant can help you understand your results, answer questions about specific sequences, and provide detailed explanations.</p>
-              <button onClick={() => navigate('/chat', { state: { sequence, results } })}
-                className="w-full bg-white text-blue-900 font-bold py-3 rounded-xl hover:bg-gray-100">
-                Ask AI Assistant
+              <button onClick={() => navigate('/chat', { state: { sequence, reference, results } })}
+              className="w-full bg-white text-blue-900 font-bold py-3 rounded-xl hover:bg-gray-100">
+              Ask AI Assistant
               </button>
             </div>
           </div>

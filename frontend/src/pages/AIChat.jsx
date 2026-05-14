@@ -6,6 +6,9 @@ export default function AIChat() {
   const navigate = useNavigate()
   const location = useLocation()
   const sequence = location.state?.sequence || 'ATCGGTATCGATCG'
+  const results = location.state?.results || null
+  const reference = location.state?.reference || ''
+
   const [messages, setMessages] = useState([
     { role: 'ai', text: "Hello! I've analyzed your DNA sequence. What would you like to know?" }
   ])
@@ -17,8 +20,26 @@ export default function AIChat() {
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
 
   const speak = (text) => {
+    window.speechSynthesis.cancel()
     const utterance = new SpeechSynthesisUtterance(text)
-    utterance.rate = 0.9
+    const voices = window.speechSynthesis.getVoices()
+    const preferredVoices = [
+      'Samantha',
+      'Karen',
+      'Daniel',
+      'Google UK English Female',
+      'Google US English',
+      'Alex',
+    ]
+    let selectedVoice = null
+    for (const name of preferredVoices) {
+      selectedVoice = voices.find(v => v.name === name)
+      if (selectedVoice) break
+    }
+    if (selectedVoice) utterance.voice = selectedVoice
+    utterance.rate = 0.92
+    utterance.pitch = 1.05
+    utterance.volume = 1
     window.speechSynthesis.speak(utterance)
   }
 
@@ -43,7 +64,14 @@ export default function AIChat() {
     setInput('')
     setLoading(true)
     try {
-      const res = await axios.post('/api/voice/query', { query, sequence })
+      const context = results
+        ? `Analysis found ${results.mutations} mutation(s), GC content is ${results.gc}%, pattern ATG found ${results.occurrences} times. Reference sequence used: ${reference || 'none'}.`
+        : ''
+      const res = await axios.post('/api/voice/query', {
+        query,
+        sequence,
+        context
+      })
       const reply = res.data.explanation
       setMessages(prev => [...prev, { role: 'ai', text: reply }])
       speak(reply)
@@ -56,7 +84,7 @@ export default function AIChat() {
   const suggestions = [
     "What does the mutation status indicate?",
     "How accurate is this analysis?",
-    "Can you explain the sequence type?",
+    "Can you explain the GC content?",
     "What should I do next?",
   ]
 
@@ -66,7 +94,10 @@ export default function AIChat() {
       <div className="flex-1 flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-8 py-4 border-b border-gray-100">
-          <button onClick={() => navigate('/results')} className="text-gray-500 hover:text-gray-700">← Back to Results</button>
+          <button onClick={() => navigate('/results', { state: { sequence, reference } })}
+            className="text-gray-500 hover:text-gray-700">
+            ← Back to Results
+          </button>
           <div className="flex items-center gap-2 bg-teal-50 px-4 py-2 rounded-full">
             <span className="text-teal-500">✨</span>
             <span className="text-teal-600 font-medium text-sm">AI Assistant</span>
@@ -133,8 +164,8 @@ export default function AIChat() {
         <h3 className="font-bold text-gray-900">Analysis Summary</h3>
         {[
           { icon: "⚡", label: "Sequence Type", value: "Human DNA" },
-          { icon: "✓", label: "Mutation Status", value: "No mutations" },
-          { icon: "↗", label: "Confidence", value: "98.7%" },
+          { icon: "🧬", label: "Mutation Status", value: results ? `${results.mutations} mutation(s)` : "No data" },
+          { icon: "↗", label: "GC Content", value: results ? `${results.gc}%` : "No data" },
         ].map((item, i) => (
           <div key={i} className="flex items-center gap-3 border border-gray-100 rounded-xl p-3">
             <div className="w-9 h-9 bg-teal-50 rounded-lg flex items-center justify-center">{item.icon}</div>
