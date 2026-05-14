@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, make_response
 from flask_cors import CORS
 from dotenv import load_dotenv
 from Bio.Seq import Seq
@@ -7,13 +7,27 @@ import json
 import os
 
 from pathlib import Path
-load_dotenv(override=True)
-# ── Gemini Setup ─────────────────────────────────────────────
+load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env", override=True)
+# ── Groq Setup ─────────────────────────────────────────────
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 app = Flask(__name__)
 CORS(app)
+@app.before_request
+def handle_preflight():
+    if request.method == "OPTIONS":
+        response = make_response()
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
+        response.headers.add('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        return response
 
+@app.after_request
+def after_request(response):
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
+    response.headers.add('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+    return response
 # ─── KMP Algorithm ───────────────────────────────────────────
 def build_lps(pattern):
     lps = [0] * len(pattern)
