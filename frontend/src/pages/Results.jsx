@@ -6,29 +6,28 @@ export default function Results() {
   const navigate = useNavigate()
   const location = useLocation()
   const sequence = location.state?.sequence || 'ATCGGTATCGATCG'
+  const reference = location.state?.reference || ''
   console.log('Sequence received:', sequence)
   const [results, setResults] = useState(null)
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
+useEffect(() => {
   const analyze = async () => {
     try {
-      const patternRes = await axios.post('/api/analyze/pattern', {
-        sequence,
-        pattern: 'ATG'
-      })
-      const mutRes = await axios.post('/api/analyze/mutations', {
-        reference: sequence,
-        sample: sequence
-      })
+      const ref = location.state?.reference || sequence
+      const [patternRes, mutRes] = await Promise.all([
+        axios.post('/api/analyze/pattern', { sequence, pattern: 'ATG' }),
+        axios.post('/api/analyze/mutations', { reference: ref, sample: sequence })
+      ])
       setResults({
         occurrences: patternRes.data.occurrences,
         mutations: mutRes.data.total_mutations,
+        mutationList: mutRes.data.mutations,
         gc: patternRes.data.gc_content,
       })
     } catch (e) {
       console.error('API error:', e)
-      setResults({ occurrences: 0, mutations: 0, gc: 0 })
+      setResults({ occurrences: 0, mutations: 0, mutationList: [], gc: 0 })
     }
     setLoading(false)
   }
