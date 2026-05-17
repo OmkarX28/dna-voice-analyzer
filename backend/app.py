@@ -316,7 +316,7 @@ KNOWN MUTATIONS REFERENCE:
    Severity: High
 """
 
-def generate_plain_english_response(intent, analysis_result, user_query,context):
+def generate_plain_english_response(intent, analysis_result, user_query, context=''):
     prompt = f"""
 You are a helpful medical AI assistant explaining DNA analysis results.
 You have access to this medical knowledge base about known mutations:
@@ -325,11 +325,15 @@ You have access to this medical knowledge base about known mutations:
 
 The user asked: "{user_query}"
 The analysis result is: {json.dumps(analysis_result)}
+IMPORTANT CONTEXT FROM THE ANALYSIS: {context}
 
-Write a clear, friendly, plain-English explanation of these results in 2-3 sentences.
-If the result relates to any mutation in the knowledge base, reference it specifically.
+Based on the context above, the analysis HAS already been run and found specific results.
+Do NOT say no mutations were found if the context says mutations were found.
+Do NOT say you need more information — you already have it in the context.
+
+Write a clear, friendly, plain-English explanation in 2-3 sentences.
+If the context mentions 1 mutation was found and the sequence matches the sickle cell mutation pattern, explain it specifically.
 Speak directly to the user. Do not use technical jargon unless you explain it.
-Do not mention JSON or code. Just explain what was found and what it might mean medically.
 """
     response = groq_client.chat.completions.create(
         model="llama-3.3-70b-versatile",
@@ -338,8 +342,10 @@ Do not mention JSON or code. Just explain what was found and what it might mean 
     )
     return response.choices[0].message.content.strip()
 
-@app.route('/voice/query', methods=['POST'])
+@app.route('/voice/query', methods=['POST', 'OPTIONS'])
 def voice_query():
+    if request.method == 'OPTIONS':
+        return make_response()
     data = request.get_json()
     user_query = data.get('query', '').strip()
     sequence = data.get('sequence', '').upper().strip()
@@ -348,7 +354,6 @@ def voice_query():
     if not user_query:
         return jsonify({"error": "No query provided"}), 400
 
-    # Step 1 — parse intent
     try:
         intent_data = parse_intent(user_query, sequence)
     except Exception as e:
@@ -357,57 +362,33 @@ def voice_query():
     intent = intent_data.get('intent')
     result = {}
 
-    # Step 2 — run the right algorithm
     if intent == 'pattern_search' and sequence and intent_data.get('pattern'):
         pattern = intent_data['pattern'].upper().strip()
         positions = kmp_search(sequence, pattern)
         gc = calculate_gc(sequence)
-        result = {
-            "pattern": pattern,
-            "occurrences": len(positions),
-            "positions": positions,
-            "gc_content": gc
-        }
-
+        result = {"pattern": pattern, "occurrences": len(positions), "positions": positions, "gc_content": gc}
     elif intent == 'mutation_detection' and sequence and intent_data.get('second_sequence'):
         reference = intent_data['second_sequence'].upper().strip()
         mutations = detect_mutations(reference, sequence)
-        result = {
-            "total_mutations": len(mutations),
-            "mutations": mutations
-        }
-
+        result = {"total_mutations": len(mutations), "mutations": mutations}
     elif intent == 'alignment' and sequence and intent_data.get('second_sequence'):
         seq2 = intent_data['second_sequence'].upper().strip()
         score, aligned1, aligned2, similarity = smith_waterman(sequence, seq2)
-        result = {
-            "alignment_score": score,
-            "similarity_percentage": similarity,
-            "aligned_seq1": aligned1,
-            "aligned_seq2": aligned2
-        }
-
+        result = {"alignment_score": score, "similarity_percentage": similarity, "aligned_seq1": aligned1, "aligned_seq2": aligned2}
     elif intent == 'gc_content' and sequence:
         gc = calculate_gc(sequence)
         result = {"gc_content": gc}
-
     elif intent == 'explain':
         result = {"topic": intent_data.get('plain_english_query', user_query)}
-
     else:
         result = {"note": "Could not determine analysis type from query"}
 
-    # Step 3 — generate plain English response
     try:
-        explanation = generate_plain_english_response(intent, result, user_query,context)
+        explanation = generate_plain_english_response(intent, result, user_query, context)
     except Exception as e:
         explanation = "Analysis complete. Please see the results below."
 
-    return jsonify({
-        "intent": intent,
-        "result": result,
-        "explanation": explanation
-    })
+    return jsonify({"intent": intent, "result": result, "explanation": explanation})
 
 if __name__ == '__main__':
     app.run(debug=True)
