@@ -314,6 +314,30 @@ KNOWN MUTATIONS REFERENCE:
    Causes: Inability to form blood clots properly
    Explanation: Mutations in the F8 gene reduce or eliminate clotting factor VIII. Without this protein, the blood clotting cascade cannot complete properly, causing prolonged bleeding from injuries and spontaneous bleeding into joints and muscles.
    Severity: High
+9. Duchenne Muscular Dystrophy - DMD gene - Deletion mutations
+   Causes: Progressive muscle weakness and degeneration
+   Explanation: Deletions in the DMD gene disrupt the reading frame, preventing production of functional dystrophin protein. Without dystrophin, muscle cells are fragile and progressively destroyed, leading to loss of mobility typically by age 12.
+   Severity: High
+
+10. Marfan Syndrome - FBN1 gene - Point mutations
+    Causes: Connective tissue disorder affecting heart, eyes, and skeleton
+    Explanation: Mutations in the FBN1 gene weaken connective tissue throughout the body. This causes the characteristic tall thin build, long limbs, flexible joints, and most dangerously, aortic aneurysm which can be life threatening.
+    Severity: High
+
+11. BRCA2 Breast Cancer - BRCA2 gene - Frameshift mutations
+    Causes: High risk of breast, ovarian, and prostate cancer
+    Explanation: Like BRCA1, mutations in BRCA2 disable DNA repair mechanisms. Carriers have up to 69% lifetime risk of breast cancer and significantly elevated risk of other cancers.
+    Severity: High
+
+12. Lynch Syndrome - MLH1/MSH2 genes - Mismatch repair mutations
+    Causes: Hereditary colorectal and endometrial cancer
+    Explanation: Mutations in DNA mismatch repair genes allow errors to accumulate during cell division. This dramatically increases the risk of colorectal cancer, often before age 50, as well as endometrial and other cancers.
+    Severity: High
+
+13. Familial Hypercholesterolemia - LDLR gene - Point mutations
+    Causes: Dangerously high cholesterol from birth leading to early heart disease
+    Explanation: Mutations in the LDLR gene prevent cells from properly removing LDL cholesterol from the blood. Without treatment, cholesterol builds up in arteries causing heart attacks often in the 30s or 40s.
+    Severity: High
 """
 
 def generate_plain_english_response(intent, analysis_result, user_query, context=''):
