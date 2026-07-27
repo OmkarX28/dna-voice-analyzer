@@ -1,25 +1,129 @@
 from flask import Flask, request, jsonify, make_response
 from flask_cors import CORS
 from dotenv import load_dotenv
-from Bio.Seq import Seq
 from groq import Groq
 import json
 import os
-
 from pathlib import Path
+
 load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env", override=True)
+
 # ── Groq Setup ─────────────────────────────────────────────
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 app = Flask(__name__)
 CORS(app)
+
 @app.after_request
 def after_request(response):
     response.headers.add('Access-Control-Allow-Origin', '*')
     response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
     response.headers.add('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
     return response
-# ─── KMP Algorithm ───────────────────────────────────────────
+
+# ── Mutation Knowledge Base ─────────────────────────────────
+MUTATION_KNOWLEDGE_BASE = """
+KNOWN MUTATIONS REFERENCE — use ONLY when the exact base change matches:
+
+1. Sickle Cell Anemia - HBB gene
+   TRIGGER: Point mutation GAG→GTG (G changed to T at the codon 6 position, specifically position where reference=G and sample=T in the HBB gene)
+   Explanation: The single base change from GAG to GTG causes hemoglobin to form rigid rods inside red blood cells, making them sickle-shaped instead of round. This blocks blood vessels causing severe pain, anemia, and organ damage. It is one of the most common genetic disorders in India.
+
+2. BRCA1 Breast Cancer - BRCA1 gene
+   TRIGGER: Any deletion, insertion, or point mutation in BRCA1 sequence
+   Explanation: Mutations in BRCA1 disable a tumor suppressor protein that repairs damaged DNA. Without this repair mechanism, cells can become cancerous. Carriers have up to 72% lifetime risk of breast cancer and elevated ovarian cancer risk.
+
+3. BRCA2 Breast Cancer - BRCA2 gene
+   TRIGGER: Any deletion, insertion, or point mutation in BRCA2 sequence
+   Explanation: Like BRCA1, BRCA2 mutations disable DNA repair. Carriers face up to 69% lifetime breast cancer risk plus elevated prostate and pancreatic cancer risk.
+
+4. Cystic Fibrosis - CFTR gene
+   TRIGGER: Any deletion or point mutation in CFTR sequence
+   Explanation: Mutations in CFTR disrupt chloride transport causing thick sticky mucus to accumulate in the lungs and digestive system. This leads to progressive lung damage and digestive problems requiring lifelong treatment.
+
+5. JAK2 Blood Cancer - JAK2 gene
+   TRIGGER: Any point mutation in JAK2 sequence
+   Explanation: JAK2 mutations cause uncontrolled blood cell production leading to myeloproliferative disorders including polycythemia vera, essential thrombocythemia, and myelofibrosis — serious blood cancers requiring ongoing treatment.
+
+6. KRAS Lung/Colorectal Cancer - KRAS gene
+   TRIGGER: Any point mutation in KRAS sequence
+   Explanation: KRAS mutations are among the most common oncogenic mutations in human cancers, found in approximately 30% of all cancers. They lock the KRAS protein in an active state, driving uncontrolled cell division in lung, colorectal, and pancreatic cancers.
+
+7. Beta Thalassemia - HBB gene
+   TRIGGER: Deletion in HBB sequence
+   Explanation: Deletions in HBB reduce beta-globin production causing severe anemia requiring regular blood transfusions. Common in Mediterranean, Middle Eastern, and South Asian populations.
+
+8. Huntington's Disease - HTT gene
+   TRIGGER: Insertion/repeat expansion in HTT sequence
+   Explanation: CAG repeat expansions in HTT create an abnormally long protein that progressively destroys brain cells causing movement disorders, cognitive decline, and psychiatric symptoms typically appearing between ages 30-50.
+"""
+
+# ── FASTA Parser ────────────────────────────────────────────
+def parse_fasta_input(raw_text):
+    """
+    Robustly parses raw input that may be:
+    1. A plain DNA string (no headers)
+    2. A single FASTA entry (one > header)
+    3. A multi-FASTA string with reference and sample separated by > headers
+    Returns: (sequence, reference) tuple — both clean ATCG strings
+    """
+    raw_text = raw_text.strip()
+    
+    if '>' not in raw_text:
+        # Plain DNA string — no headers
+        clean = ''.join(c for c in raw_text.upper() if c in 'ATCG')
+        return clean, None
+    
+    # Split on > headers
+    entries = []
+    current_header = None
+    current_seq = []
+    
+    for line in raw_text.split('\n'):
+        line = line.strip()
+        if line.startswith('>'):
+            if current_seq:
+                seq = ''.join(c for c in ''.join(current_seq).upper() if c in 'ATCG')
+                entries.append((current_header, seq))
+            current_header = line[1:].strip()
+            current_seq = []
+        else:
+            current_seq.append(line)
+    
+    # Don't forget the last entry
+    if current_seq:
+        seq = ''.join(c for c in ''.join(current_seq).upper() if c in 'ATCG')
+        entries.append((current_header, seq))
+    
+    if len(entries) == 0:
+        return '', None
+    elif len(entries) == 1:
+        return entries[0][1], None
+    else:
+        # Multiple entries — first is reference, second is sample
+        # Or detect by header keywords
+        ref_seq = None
+        sample_seq = None
+        
+        for header, seq in entries:
+            header_lower = header.lower() if header else ''
+            if any(k in header_lower for k in ['ref', 'reference', 'normal', 'wild', 'wt']):
+                ref_seq = seq
+            elif any(k in header_lower for k in ['sample', 'mutant', 'patient', 'mut', 'test']):
+                sample_seq = seq
+        
+        # If no keyword match, use order: first=reference, second=sample
+        if ref_seq is None and sample_seq is None:
+            ref_seq = entries[0][1]
+            sample_seq = entries[1][1]
+        elif ref_seq is None:
+            ref_seq = entries[0][1]
+        elif sample_seq is None:
+            sample_seq = entries[1][1]
+        
+        return sample_seq, ref_seq
+
+# ── KMP Algorithm ───────────────────────────────────────────
 def build_lps(pattern):
     lps = [0] * len(pattern)
     length = 0
@@ -40,6 +144,8 @@ def build_lps(pattern):
 def kmp_search(sequence, pattern):
     positions = []
     n, m = len(sequence), len(pattern)
+    if m == 0 or n == 0:
+        return positions
     lps = build_lps(pattern)
     i = j = 0
     while i < n:
@@ -56,52 +162,17 @@ def kmp_search(sequence, pattern):
                 i += 1
     return positions
 
-# ─── GC Content ──────────────────────────────────────────────
+# ── GC Content ──────────────────────────────────────────────
 def calculate_gc(sequence):
+    if not sequence:
+        return 0
     g = sequence.count('G')
     c = sequence.count('C')
-    total = len(sequence)
-    if total == 0:
-        return 0
-    return round((g + c) / total * 100, 2)
+    return round((g + c) / len(sequence) * 100, 2)
 
-# ─── Routes ──────────────────────────────────────────────────
-@app.route('/ping', methods=['GET'])
-def ping():
-    return jsonify({"message": "DNA Analyzer backend is running!"})
-
-@app.route('/analyze/pattern', methods=['POST'])
-def find_pattern():
-    data = request.get_json()
-    sequence = data.get('sequence', '').upper().strip()
-    pattern = data.get('pattern', '').upper().strip()
-
-    if not sequence or not pattern:
-        return jsonify({"error": "Please provide both a sequence and a pattern"}), 400
-
-    if not all(c in 'ATCG' for c in sequence):
-        return jsonify({"error": "Sequence contains invalid characters. Only A, T, C, G allowed"}), 400
-
-    if not all(c in 'ATCG' for c in pattern):
-        return jsonify({"error": "Pattern contains invalid characters. Only A, T, C, G allowed"}), 400
-
-    positions = kmp_search(sequence, pattern)
-    gc = calculate_gc(sequence)
-
-    return jsonify({
-        "sequence_length": len(sequence),
-        "pattern": pattern,
-        "pattern_length": len(pattern),
-        "occurrences": len(positions),
-        "positions": positions,
-        "gc_content": gc,
-        "message": f"Pattern '{pattern}' found {len(positions)} time(s) in the sequence." if positions else f"Pattern '{pattern}' was not found in the sequence."
-    })
-# ─── Mutation Detector ───────────────────────────────────────
+# ── Mutation Detector ───────────────────────────────────────
 def detect_mutations(reference, sample):
     mutations = []
-
-    # Point mutations (substitutions)
     min_len = min(len(reference), len(sample))
     for i in range(min_len):
         if reference[i] != sample[i]:
@@ -112,8 +183,6 @@ def detect_mutations(reference, sample):
                 "sample_base": sample[i],
                 "description": f"Position {i}: '{reference[i]}' changed to '{sample[i]}'"
             })
-
-    # Insertion (sample is longer than reference)
     if len(sample) > len(reference):
         inserted = sample[len(reference):]
         mutations.append({
@@ -122,8 +191,6 @@ def detect_mutations(reference, sample):
             "inserted_bases": inserted,
             "description": f"Insertion of '{inserted}' after position {len(reference) - 1}"
         })
-
-    # Deletion (sample is shorter than reference)
     if len(sample) < len(reference):
         deleted = reference[len(sample):]
         mutations.append({
@@ -132,50 +199,15 @@ def detect_mutations(reference, sample):
             "deleted_bases": deleted,
             "description": f"Deletion of '{deleted}' starting at position {len(sample)}"
         })
-
     return mutations
 
-
-@app.route('/analyze/mutations', methods=['POST'])
-def find_mutations():
-    data = request.get_json()
-    reference = data.get('reference', '').upper().strip()
-    sample = data.get('sample', '').upper().strip()
-
-    if not reference or not sample:
-        return jsonify({"error": "Please provide both a reference and a sample sequence"}), 400
-
-    if not all(c in 'ATCG' for c in reference):
-        return jsonify({"error": "Reference contains invalid characters. Only A, T, C, G allowed"}), 400
-
-    if not all(c in 'ATCG' for c in sample):
-        return jsonify({"error": "Sample contains invalid characters. Only A, T, C, G allowed"}), 400
-
-    mutations = detect_mutations(reference, sample)
-    gc_ref = calculate_gc(reference)
-    gc_sample = calculate_gc(sample)
-
-    return jsonify({
-        "reference_length": len(reference),
-        "sample_length": len(sample),
-        "total_mutations": len(mutations),
-        "mutations": mutations,
-        "gc_content": {
-            "reference": gc_ref,
-            "sample": gc_sample
-        },
-        "message": f"{len(mutations)} mutation(s) detected." if mutations else "No mutations detected. Sequences are identical."
-    })
-# ─── Smith-Waterman Alignment ────────────────────────────────
+# ── Smith-Waterman ──────────────────────────────────────────
 def smith_waterman(seq1, seq2, match=2, mismatch=-1, gap=-2):
     rows = len(seq1) + 1
     cols = len(seq2) + 1
-
-    # Build scoring matrix
     matrix = [[0] * cols for _ in range(rows)]
     max_score = 0
     max_pos = (0, 0)
-
     for i in range(1, rows):
         for j in range(1, cols):
             match_score = match if seq1[i-1] == seq2[j-1] else mismatch
@@ -186,16 +218,12 @@ def smith_waterman(seq1, seq2, match=2, mismatch=-1, gap=-2):
             if matrix[i][j] > max_score:
                 max_score = matrix[i][j]
                 max_pos = (i, j)
-
-    # Traceback to find aligned sequences
     aligned_seq1 = ""
     aligned_seq2 = ""
     i, j = max_pos
-
     while i > 0 and j > 0 and matrix[i][j] > 0:
         current = matrix[i][j]
         match_score = match if seq1[i-1] == seq2[j-1] else mismatch
-
         if current == matrix[i-1][j-1] + match_score:
             aligned_seq1 = seq1[i-1] + aligned_seq1
             aligned_seq2 = seq2[j-1] + aligned_seq2
@@ -209,41 +237,11 @@ def smith_waterman(seq1, seq2, match=2, mismatch=-1, gap=-2):
             aligned_seq1 = "-" + aligned_seq1
             aligned_seq2 = seq2[j-1] + aligned_seq2
             j -= 1
-
-    # Calculate similarity percentage
     matches = sum(1 for a, b in zip(aligned_seq1, aligned_seq2) if a == b)
     similarity = round((matches / max(len(aligned_seq1), 1)) * 100, 2)
-
     return max_score, aligned_seq1, aligned_seq2, similarity
 
-
-@app.route('/analyze/align', methods=['POST'])
-def align_sequences():
-    data = request.get_json()
-    seq1 = data.get('seq1', '').upper().strip()
-    seq2 = data.get('seq2', '').upper().strip()
-
-    if not seq1 or not seq2:
-        return jsonify({"error": "Please provide both seq1 and seq2"}), 400
-
-    if not all(c in 'ATCG' for c in seq1):
-        return jsonify({"error": "seq1 contains invalid characters. Only A, T, C, G allowed"}), 400
-
-    if not all(c in 'ATCG' for c in seq2):
-        return jsonify({"error": "seq2 contains invalid characters. Only A, T, C, G allowed"}), 400
-
-    score, aligned1, aligned2, similarity = smith_waterman(seq1, seq2)
-
-    return jsonify({
-        "seq1_length": len(seq1),
-        "seq2_length": len(seq2),
-        "alignment_score": score,
-        "similarity_percentage": similarity,
-        "aligned_seq1": aligned1,
-        "aligned_seq2": aligned2,
-        "message": f"Sequences are {similarity}% similar with an alignment score of {score}."
-    })
-# ── NLP Intent Engine ─────────────────────────────────────────
+# ── NLP Intent Engine ───────────────────────────────────────
 def parse_intent(user_query, sequence=None):
     prompt = f"""
 You are an AI assistant for a DNA sequence analysis tool.
@@ -272,99 +270,171 @@ Return this exact JSON structure:
     text = text.replace("```json", "").replace("```", "").strip()
     return json.loads(text)
 
-
-MUTATION_KNOWLEDGE_BASE = """
-KNOWN MUTATIONS REFERENCE:
-1. Sickle Cell Anemia - HBB gene - Point mutation GAG→GTG at codon 6
-   Causes: Red blood cells become sickle-shaped, blocking blood flow
-   Explanation: The single change from GAG to GTG causes hemoglobin to form rigid rods inside red blood cells, making them crescent-shaped instead of round. This causes severe pain, anemia, and organ damage.
-   Severity: High
-
-2. BRCA1 Breast Cancer - BRCA1 gene - Deletion/frameshift mutations
-   Causes: Significantly increased risk of breast and ovarian cancer
-   Explanation: Mutations in BRCA1 disable a tumor suppressor protein that normally repairs damaged DNA. Without this repair mechanism, cells can become cancerous. Carriers have up to 72% lifetime risk of breast cancer.
-   Severity: High
-
-3. Cystic Fibrosis - CFTR gene - Deletion of phenylalanine at position 508
-   Causes: Thick mucus buildup in lungs, digestive system, and other organs
-   Explanation: The missing amino acid causes the CFTR protein to fold incorrectly and get destroyed before reaching the cell surface. Without functional CFTR, chloride transport fails causing thick sticky mucus to accumulate.
-   Severity: High
-
-4. Huntington's Disease - HTT gene - CAG repeat expansion beyond 36 repeats
-   Causes: Progressive brain cell death leading to movement, cognitive and psychiatric disorders
-   Explanation: Extra CAG repeats create an abnormally long huntingtin protein that damages brain cells over time. Symptoms typically appear between ages 30-50 and worsen progressively with no cure currently available.
-   Severity: High
-
-5. TB Drug Resistance - rpoB gene - Point mutations at codons 516, 526, 531
-   Causes: Resistance to rifampicin, a key TB antibiotic
-   Explanation: Mutations in the rpoB gene change the shape of RNA polymerase so rifampicin can no longer bind to it. This makes the TB bacteria resistant to one of the most important first-line antibiotics, requiring more toxic second-line drugs.
-   Severity: High
-
-6. Beta Thalassemia - HBB gene - Various point mutations and deletions
-   Causes: Reduced or absent beta-globin production leading to severe anemia
-   Explanation: Mutations in the HBB gene reduce production of the beta-globin component of hemoglobin. Without enough functional hemoglobin, red blood cells are small and destroyed rapidly, causing severe anemia requiring regular blood transfusions.
-   Severity: High
-
-7. PKU (Phenylketonuria) - PAH gene - Point mutations reducing enzyme activity
-   Causes: Buildup of phenylalanine in blood causing intellectual disability
-   Explanation: Mutations in the PAH gene reduce or eliminate the enzyme that breaks down phenylalanine from food. Without treatment, phenylalanine accumulates to toxic levels in the brain causing severe intellectual disability. Treatable with a strict low-phenylalanine diet.
-   Severity: High
-
-8. Hemophilia A - F8 gene - Inversion or point mutations
-   Causes: Inability to form blood clots properly
-   Explanation: Mutations in the F8 gene reduce or eliminate clotting factor VIII. Without this protein, the blood clotting cascade cannot complete properly, causing prolonged bleeding from injuries and spontaneous bleeding into joints and muscles.
-   Severity: High
-9. Duchenne Muscular Dystrophy - DMD gene - Deletion mutations
-   Causes: Progressive muscle weakness and degeneration
-   Explanation: Deletions in the DMD gene disrupt the reading frame, preventing production of functional dystrophin protein. Without dystrophin, muscle cells are fragile and progressively destroyed, leading to loss of mobility typically by age 12.
-   Severity: High
-
-10. Marfan Syndrome - FBN1 gene - Point mutations
-    Causes: Connective tissue disorder affecting heart, eyes, and skeleton
-    Explanation: Mutations in the FBN1 gene weaken connective tissue throughout the body. This causes the characteristic tall thin build, long limbs, flexible joints, and most dangerously, aortic aneurysm which can be life threatening.
-    Severity: High
-
-11. BRCA2 Breast Cancer - BRCA2 gene - Frameshift mutations
-    Causes: High risk of breast, ovarian, and prostate cancer
-    Explanation: Like BRCA1, mutations in BRCA2 disable DNA repair mechanisms. Carriers have up to 69% lifetime risk of breast cancer and significantly elevated risk of other cancers.
-    Severity: High
-
-12. Lynch Syndrome - MLH1/MSH2 genes - Mismatch repair mutations
-    Causes: Hereditary colorectal and endometrial cancer
-    Explanation: Mutations in DNA mismatch repair genes allow errors to accumulate during cell division. This dramatically increases the risk of colorectal cancer, often before age 50, as well as endometrial and other cancers.
-    Severity: High
-
-13. Familial Hypercholesterolemia - LDLR gene - Point mutations
-    Causes: Dangerously high cholesterol from birth leading to early heart disease
-    Explanation: Mutations in the LDLR gene prevent cells from properly removing LDL cholesterol from the blood. Without treatment, cholesterol builds up in arteries causing heart attacks often in the 30s or 40s.
-    Severity: High
-"""
-
+# ── FIXED: Generate Plain English Response ──────────────────
 def generate_plain_english_response(intent, analysis_result, user_query, context=''):
-    prompt = f"""
-You are a helpful medical AI assistant explaining DNA analysis results.
-You have access to this medical knowledge base about known mutations:
+    """
+    CRITICAL FIX: The LLM is forced to ground its answer STRICTLY on the
+    algorithm's JSON output. It must NOT default to Sickle Cell or any
+    disease unless the exact base change in analysis_result matches.
+    """
 
+    # Build a precise mutation summary from the actual algorithm output
+    mutation_summary = ""
+    if analysis_result.get("mutations") and len(analysis_result["mutations"]) > 0:
+        mutation_lines = []
+        for m in analysis_result["mutations"]:
+            if m["type"] == "point_mutation":
+                mutation_lines.append(
+                    f"Point mutation at position {m['position']}: "
+                    f"reference base '{m['reference_base']}' changed to '{m['sample_base']}'"
+                )
+            elif m["type"] == "insertion":
+                mutation_lines.append(
+                    f"Insertion of bases '{m['inserted_bases']}' at position {m['position']}"
+                )
+            elif m["type"] == "deletion":
+                mutation_lines.append(
+                    f"Deletion of bases '{m['deleted_bases']}' starting at position {m['position']}"
+                )
+        mutation_summary = "\n".join(mutation_lines)
+    elif analysis_result.get("total_mutations", 0) == 0:
+        mutation_summary = "No mutations detected. Sequences are identical."
+    
+    prompt = f"""
+You are a medical AI assistant explaining DNA analysis results.
+
+STRICT RULES — you MUST follow these or your answer is wrong:
+1. Base your ENTIRE explanation on the ACTUAL MUTATION DATA provided below. Do not guess or use prior knowledge about what disease this "might" be.
+2. Only mention Sickle Cell Anemia if you see EXACTLY: reference_base='G' changed to sample_base='T' (GAG to GTG mutation).
+3. Only mention BRCA1/BRCA2 if the context explicitly says BRCA gene.
+4. Only mention CFTR/Cystic Fibrosis if the context explicitly says CFTR gene.
+5. Only mention JAK2 if the context explicitly says JAK2 gene.
+6. If you cannot match the mutation to a known disease from the context, simply describe the exact base change found and say it requires clinical evaluation.
+7. NEVER hallucinate a disease name that is not supported by the actual mutation data.
+
+ACTUAL ALGORITHM OUTPUT (ground truth — use ONLY this):
+{json.dumps(analysis_result, indent=2)}
+
+EXACT MUTATIONS FOUND BY ALGORITHM:
+{mutation_summary}
+
+ADDITIONAL CONTEXT: {context}
+
+USER QUESTION: "{user_query}"
+
+KNOWN MUTATIONS REFERENCE (only use if the base change matches exactly):
 {MUTATION_KNOWLEDGE_BASE}
 
-The user asked: "{user_query}"
-The analysis result is: {json.dumps(analysis_result)}
-IMPORTANT CONTEXT FROM THE ANALYSIS: {context}
-
-Based on the context above, the analysis HAS already been run and found specific results.
-Do NOT say no mutations were found if the context says mutations were found.
-Do NOT say you need more information — you already have it in the context.
-
-Write a clear, friendly, plain-English explanation in 2-3 sentences.
-If the context mentions 1 mutation was found and the sequence matches the sickle cell mutation pattern, explain it specifically.
-Speak directly to the user. Do not use technical jargon unless you explain it.
+Write a clear, friendly 2-3 sentence explanation grounded strictly in the mutation data above.
+State the exact base change found. Then if it matches a known disease, name it and explain it briefly.
+If it does not match any known disease, say the mutation requires clinical evaluation.
+Do not mention JSON, code, or algorithms.
 """
     response = groq_client.chat.completions.create(
         model="llama-3.3-70b-versatile",
         messages=[{"role": "user", "content": prompt}],
-        temperature=0.3
+        temperature=0.1
     )
     return response.choices[0].message.content.strip()
+
+# ── Routes ──────────────────────────────────────────────────
+@app.route('/ping', methods=['GET'])
+def ping():
+    return jsonify({"message": "DNA Analyzer backend is running!"})
+
+@app.route('/analyze/pattern', methods=['POST', 'OPTIONS'])
+def find_pattern():
+    if request.method == 'OPTIONS':
+        return make_response()
+    data = request.get_json()
+    raw_sequence = data.get('sequence', '')
+    pattern = data.get('pattern', '').upper().strip()
+
+    sequence, _ = parse_fasta_input(raw_sequence)
+
+    if not sequence or not pattern:
+        return jsonify({"error": "Please provide both a sequence and a pattern"}), 400
+    if not all(c in 'ATCG' for c in sequence):
+        return jsonify({"error": "Sequence contains invalid characters. Only A, T, C, G allowed"}), 400
+    if not all(c in 'ATCG' for c in pattern):
+        return jsonify({"error": "Pattern contains invalid characters. Only A, T, C, G allowed"}), 400
+
+    positions = kmp_search(sequence, pattern)
+    gc = calculate_gc(sequence)
+
+    return jsonify({
+        "sequence_length": len(sequence),
+        "pattern": pattern,
+        "pattern_length": len(pattern),
+        "occurrences": len(positions),
+        "positions": positions,
+        "gc_content": gc,
+        "message": f"Pattern '{pattern}' found {len(positions)} time(s)." if positions else f"Pattern '{pattern}' was not found."
+    })
+
+@app.route('/analyze/mutations', methods=['POST', 'OPTIONS'])
+def find_mutations():
+    if request.method == 'OPTIONS':
+        return make_response()
+    data = request.get_json()
+    raw_reference = data.get('reference', '')
+    raw_sample = data.get('sample', '')
+
+    # Handle multi-FASTA input — if reference is empty but sample has > headers
+    if not raw_reference and '>' in raw_sample:
+        sample, reference = parse_fasta_input(raw_sample)
+    else:
+        sample, _ = parse_fasta_input(raw_sample)
+        reference, _ = parse_fasta_input(raw_reference)
+
+    if not reference or not sample:
+        return jsonify({"error": "Please provide both a reference and a sample sequence"}), 400
+    if not all(c in 'ATCG' for c in reference):
+        return jsonify({"error": "Reference contains invalid characters. Only A, T, C, G allowed"}), 400
+    if not all(c in 'ATCG' for c in sample):
+        return jsonify({"error": "Sample contains invalid characters. Only A, T, C, G allowed"}), 400
+
+    mutations = detect_mutations(reference, sample)
+    gc_ref = calculate_gc(reference)
+    gc_sample = calculate_gc(sample)
+
+    return jsonify({
+        "reference_length": len(reference),
+        "sample_length": len(sample),
+        "total_mutations": len(mutations),
+        "mutations": mutations,
+        "gc_content": {"reference": gc_ref, "sample": gc_sample},
+        "message": f"{len(mutations)} mutation(s) detected." if mutations else "No mutations detected. Sequences are identical."
+    })
+
+@app.route('/analyze/align', methods=['POST', 'OPTIONS'])
+def align_sequences():
+    if request.method == 'OPTIONS':
+        return make_response()
+    data = request.get_json()
+    raw_seq1 = data.get('seq1', '')
+    raw_seq2 = data.get('seq2', '')
+
+    seq1, _ = parse_fasta_input(raw_seq1)
+    seq2, _ = parse_fasta_input(raw_seq2)
+
+    if not seq1 or not seq2:
+        return jsonify({"error": "Please provide both seq1 and seq2"}), 400
+    if not all(c in 'ATCG' for c in seq1):
+        return jsonify({"error": "seq1 contains invalid characters. Only A, T, C, G allowed"}), 400
+    if not all(c in 'ATCG' for c in seq2):
+        return jsonify({"error": "seq2 contains invalid characters. Only A, T, C, G allowed"}), 400
+
+    score, aligned1, aligned2, similarity = smith_waterman(seq1, seq2)
+    return jsonify({
+        "seq1_length": len(seq1),
+        "seq2_length": len(seq2),
+        "alignment_score": score,
+        "similarity_percentage": similarity,
+        "aligned_seq1": aligned1,
+        "aligned_seq2": aligned2,
+        "message": f"Sequences are {similarity}% similar with an alignment score of {score}."
+    })
 
 @app.route('/voice/query', methods=['POST', 'OPTIONS'])
 def voice_query():
@@ -372,8 +442,10 @@ def voice_query():
         return make_response()
     data = request.get_json()
     user_query = data.get('query', '').strip()
-    sequence = data.get('sequence', '').upper().strip()
+    raw_sequence = data.get('sequence', '')
     context = data.get('context', '')
+
+    sequence, parsed_reference = parse_fasta_input(raw_sequence)
 
     if not user_query:
         return jsonify({"error": "No query provided"}), 400
@@ -390,20 +462,46 @@ def voice_query():
         pattern = intent_data['pattern'].upper().strip()
         positions = kmp_search(sequence, pattern)
         gc = calculate_gc(sequence)
-        result = {"pattern": pattern, "occurrences": len(positions), "positions": positions, "gc_content": gc}
-    elif intent == 'mutation_detection' and sequence and intent_data.get('second_sequence'):
-        reference = intent_data['second_sequence'].upper().strip()
-        mutations = detect_mutations(reference, sequence)
-        result = {"total_mutations": len(mutations), "mutations": mutations}
+        result = {
+            "pattern": pattern,
+            "occurrences": len(positions),
+            "positions": positions,
+            "gc_content": gc
+        }
+
+    elif intent == 'mutation_detection' and sequence:
+        reference = intent_data.get('second_sequence', '')
+        if reference:
+            reference = reference.upper().strip()
+        elif parsed_reference:
+            reference = parsed_reference
+        if reference:
+            mutations = detect_mutations(reference, sequence)
+            result = {
+                "total_mutations": len(mutations),
+                "mutations": mutations,
+                "gc_content": calculate_gc(sequence)
+            }
+        else:
+            result = {"note": "No reference sequence provided for mutation detection"}
+
     elif intent == 'alignment' and sequence and intent_data.get('second_sequence'):
         seq2 = intent_data['second_sequence'].upper().strip()
         score, aligned1, aligned2, similarity = smith_waterman(sequence, seq2)
-        result = {"alignment_score": score, "similarity_percentage": similarity, "aligned_seq1": aligned1, "aligned_seq2": aligned2}
+        result = {
+            "alignment_score": score,
+            "similarity_percentage": similarity,
+            "aligned_seq1": aligned1,
+            "aligned_seq2": aligned2
+        }
+
     elif intent == 'gc_content' and sequence:
         gc = calculate_gc(sequence)
         result = {"gc_content": gc}
+
     elif intent == 'explain':
         result = {"topic": intent_data.get('plain_english_query', user_query)}
+
     else:
         result = {"note": "Could not determine analysis type from query"}
 

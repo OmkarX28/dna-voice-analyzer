@@ -8,6 +8,7 @@ export default function AIChat() {
   const sequence = location.state?.sequence || 'ATCGGTATCGATCG'
   const results = location.state?.results || null
   const reference = location.state?.reference || ''
+  const condition = location.state?.condition || ''
 
   const [messages, setMessages] = useState([
     { role: 'ai', text: "Hello! I've analyzed your DNA sequence. What would you like to know?" }
@@ -23,14 +24,7 @@ export default function AIChat() {
     window.speechSynthesis.cancel()
     const utterance = new SpeechSynthesisUtterance(text)
     const voices = window.speechSynthesis.getVoices()
-    const preferredVoices = [
-      'Samantha',
-      'Karen',
-      'Daniel',
-      'Google UK English Female',
-      'Google US English',
-      'Alex',
-    ]
+    const preferredVoices = ['Samantha', 'Karen', 'Daniel', 'Google UK English Female', 'Google US English', 'Alex']
     let selectedVoice = null
     for (const name of preferredVoices) {
       selectedVoice = voices.find(v => v.name === name)
@@ -50,10 +44,7 @@ export default function AIChat() {
     recognition.lang = 'en-US'
     recognition.onstart = () => setListening(true)
     recognition.onend = () => setListening(false)
-    recognition.onresult = (e) => {
-      const transcript = e.results[0][0].transcript
-      setInput(transcript)
-    }
+    recognition.onresult = (e) => setInput(e.results[0][0].transcript)
     recognition.start()
   }
 
@@ -64,14 +55,25 @@ export default function AIChat() {
     setInput('')
     setLoading(true)
     try {
-      const context = results
-        ? `Analysis found ${results.mutations} mutation(s), GC content is ${results.gc}%, pattern ATG found ${results.occurrences} times. Reference sequence used: ${reference || 'none'}.`
-        : ''
-      const res = await axios.post('/api/voice/query', {
-        query,
-        sequence,
-        context
-      })
+      const mutationDetails = results?.mutationList?.length > 0
+        ? results.mutationList.map(m =>
+            m.type === 'point_mutation'
+              ? `Point mutation at position ${m.position}: reference base '${m.reference_base}' changed to '${m.sample_base}'`
+              : m.type === 'insertion'
+              ? `Insertion of '${m.inserted_bases}' at position ${m.position}`
+              : `Deletion of '${m.deleted_bases}' at position ${m.position}`
+          ).join('; ')
+        : 'No mutations detected'
+
+      const context = `
+Gene/Condition: ${condition || 'unknown'}.
+Total mutations found: ${results?.mutations ?? 0}.
+GC content: ${results?.gc ?? 0}%.
+Exact mutation details from algorithm: ${mutationDetails}.
+Reference sequence used: ${reference ? 'yes' : 'none'}.
+      `.trim()
+
+      const res = await axios.post('/api/voice/query', { query, sequence, context })
       const reply = res.data.explanation
       setMessages(prev => [...prev, { role: 'ai', text: reply }])
       speak(reply)
@@ -90,11 +92,9 @@ export default function AIChat() {
 
   return (
     <div className="min-h-screen bg-white flex">
-      {/* Main chat */}
       <div className="flex-1 flex flex-col">
-        {/* Header */}
         <div className="flex items-center justify-between px-8 py-4 border-b border-gray-100">
-          <button onClick={() => navigate('/results', { state: { sequence, reference } })}
+          <button onClick={() => navigate('/results', { state: { sequence, reference, condition } })}
             className="text-gray-500 hover:text-gray-700">
             ← Back to Results
           </button>
@@ -104,14 +104,11 @@ export default function AIChat() {
           </div>
         </div>
 
-        {/* Messages */}
         <div className="flex-1 overflow-y-auto px-8 py-6 flex flex-col gap-4">
           {messages.map((msg, i) => (
             <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
               <div className={`max-w-lg px-5 py-4 rounded-2xl text-sm leading-relaxed ${
-                msg.role === 'user'
-                  ? 'bg-blue-900 text-white'
-                  : 'bg-gray-100 text-gray-700'
+                msg.role === 'user' ? 'bg-blue-900 text-white' : 'bg-gray-100 text-gray-700'
               }`}>
                 {msg.text}
               </div>
@@ -119,15 +116,12 @@ export default function AIChat() {
           ))}
           {loading && (
             <div className="flex justify-start">
-              <div className="bg-gray-100 px-5 py-4 rounded-2xl text-gray-400 text-sm animate-pulse">
-                Analyzing...
-              </div>
+              <div className="bg-gray-100 px-5 py-4 rounded-2xl text-gray-400 text-sm animate-pulse">Analyzing...</div>
             </div>
           )}
           <div ref={bottomRef} />
         </div>
 
-        {/* Suggestions */}
         <div className="px-8 pb-3 flex flex-wrap gap-2">
           {suggestions.map((s, i) => (
             <button key={i} onClick={() => sendMessage(s)}
@@ -137,7 +131,6 @@ export default function AIChat() {
           ))}
         </div>
 
-        {/* Input */}
         <div className="px-8 pb-6 flex items-center gap-3">
           <div className="flex-1 flex items-center border border-gray-200 rounded-2xl px-5 py-3 gap-3">
             <input
@@ -159,7 +152,6 @@ export default function AIChat() {
         </div>
       </div>
 
-      {/* Sidebar */}
       <div className="w-72 border-l border-gray-100 p-6 flex flex-col gap-4">
         <h3 className="font-bold text-gray-900">Analysis Summary</h3>
         {[
@@ -175,7 +167,6 @@ export default function AIChat() {
             </div>
           </div>
         ))}
-
         <div className="bg-gradient-to-br from-blue-900 to-teal-500 rounded-2xl p-4 mt-2">
           <h4 className="font-bold text-white mb-3">Quick Tips</h4>
           {[

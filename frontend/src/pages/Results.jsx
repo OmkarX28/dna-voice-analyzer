@@ -7,32 +7,32 @@ export default function Results() {
   const location = useLocation()
   const sequence = location.state?.sequence || 'ATCGGTATCGATCG'
   const reference = location.state?.reference || ''
-  console.log('Sequence received:', sequence)
+  const condition = location.state?.condition || ''
   const [results, setResults] = useState(null)
   const [loading, setLoading] = useState(true)
 
-useEffect(() => {
-  const analyze = async () => {
-    try {
-      const ref = location.state?.reference || sequence
-      const [patternRes, mutRes] = await Promise.all([
-        axios.post('/api/analyze/pattern', { sequence, pattern: 'ATG' }),
-        axios.post('/api/analyze/mutations', { reference: ref, sample: sequence })
-      ])
-      setResults({
-        occurrences: patternRes.data.occurrences,
-        mutations: mutRes.data.total_mutations,
-        mutationList: mutRes.data.mutations,
-        gc: patternRes.data.gc_content,
-      })
-    } catch (e) {
-      console.error('API error:', e)
-      setResults({ occurrences: 0, mutations: 0, mutationList: [], gc: 0 })
+  useEffect(() => {
+    const analyze = async () => {
+      try {
+        const ref = reference || sequence
+        const [patternRes, mutRes] = await Promise.all([
+          axios.post('/api/analyze/pattern', { sequence, pattern: 'ATG' }),
+          axios.post('/api/analyze/mutations', { reference: ref, sample: sequence })
+        ])
+        setResults({
+          occurrences: patternRes.data.occurrences,
+          mutations: mutRes.data.total_mutations,
+          mutationList: mutRes.data.mutations,
+          gc: patternRes.data.gc_content,
+        })
+      } catch (e) {
+        console.error('API error:', e)
+        setResults({ occurrences: 0, mutations: 0, mutationList: [], gc: 0 })
+      }
+      setLoading(false)
     }
-    setLoading(false)
-  }
-  analyze()
-}, [sequence])
+    analyze()
+  }, [sequence])
 
   return (
     <div className="min-h-screen bg-white px-10 py-8">
@@ -42,12 +42,8 @@ useEffect(() => {
           <h1 className="text-3xl font-black text-blue-900">Analysis Complete</h1>
         </div>
         <div className="flex gap-3">
-          <button className="border border-gray-200 px-4 py-2 rounded-xl text-gray-600 hover:bg-gray-50 flex items-center gap-2">
-            ↗ Share
-          </button>
-          <button className="border border-gray-200 px-4 py-2 rounded-xl text-gray-600 hover:bg-gray-50 flex items-center gap-2">
-            ↓ Download Report
-          </button>
+          <button className="border border-gray-200 px-4 py-2 rounded-xl text-gray-600 hover:bg-gray-50 flex items-center gap-2">↗ Share</button>
+          <button className="border border-gray-200 px-4 py-2 rounded-xl text-gray-600 hover:bg-gray-50 flex items-center gap-2">↓ Download Report</button>
         </div>
       </div>
 
@@ -58,7 +54,6 @@ useEffect(() => {
         </div>
       ) : (
         <>
-          {/* Stat cards */}
           <div className="grid grid-cols-3 gap-6 mb-8">
             {[
               { icon: "⚡", label: "Sequence Type", value: "Human DNA", sub: "Homo sapiens genome sequence detected" },
@@ -80,7 +75,6 @@ useEffect(() => {
           </div>
 
           <div className="flex gap-6">
-            {/* Analysis summary */}
             <div className="flex-1 border border-gray-100 rounded-2xl p-6 shadow-sm">
               <h3 className="font-bold text-gray-900 mb-4 flex items-center gap-2">📋 Analysis Summary</h3>
               {[
@@ -96,13 +90,12 @@ useEffect(() => {
               ))}
             </div>
 
-            {/* AI panel */}
             <div className="w-80 bg-gradient-to-br from-blue-900 to-teal-500 rounded-2xl p-6">
               <h3 className="font-bold text-white mb-2">Need More Insights?</h3>
               <p className="text-white/70 text-sm mb-6">Our AI assistant can help you understand your results, answer questions about specific sequences, and provide detailed explanations.</p>
-              <button onClick={() => navigate('/chat', { state: { sequence, reference, results } })}
-              className="w-full bg-white text-blue-900 font-bold py-3 rounded-xl hover:bg-gray-100">
-              Ask AI Assistant
+              <button onClick={() => navigate('/chat', { state: { sequence, reference, results, condition } })}
+                className="w-full bg-white text-blue-900 font-bold py-3 rounded-xl hover:bg-gray-100">
+                Ask AI Assistant
               </button>
             </div>
           </div>
